@@ -62,8 +62,8 @@ export class WhatsappController {
   async handleWebhook(@Body() body: any, @Res() res: Response) {
     this.startPolling();
 
-    const message = body.Body?.toLowerCase().trim() || '';
-    const phone = body.From;
+    const message = (body.Body || body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.text?.body || '').toLowerCase().trim();
+    const phone = body.From || body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0]?.wa_id || '';
 
     console.log(`📱 ${phone}: "${message}"`);
 
