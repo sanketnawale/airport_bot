@@ -2,6 +2,7 @@ import { Controller, Post, Body, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { FlightsService } from '../flights/flights.service';
 import { AiService } from 'src/ai/ai.service';
+import Twilio from 'twilio'; 
 
 @Controller('whatsapp')
 export class WhatsappController {
@@ -14,8 +15,14 @@ export class WhatsappController {
   } = {};
   private pollInterval: NodeJS.Timeout | null = null;
 
-  constructor(private flightsService: FlightsService,
-    private aiService: AiService) {}
+  constructor(
+    private flightsService: FlightsService,
+    private aiService: AiService,
+    private twilioClient = Twilio(  
+      process.env.TWILIO_ACCOUNT_SID!,
+      process.env.TWILIO_AUTH_TOKEN!,
+    ),
+  ) {}
 
   // 🔥 Enhanced polling with full status tracking
   private startPolling() {
@@ -38,21 +45,40 @@ export class WhatsappController {
         // 🛑 GATE CHANGE ALERT
         const currentGate = flight.departure?.gate || flight.arrival?.gate;
         if (currentGate && currentGate !== sub.lastGate) {
-          console.log(`🛑 GATE ALERT! ${sub.flight} → ${currentGate} → ${userPhone}`);
           sub.lastGate = currentGate;
           
-          // TODO: Send WhatsApp notification via Twilio
-          const alertMessage = `🛑 **GATE ALERT**\n\n${sub.flight} gate announced:\n**${currentGate}**\n\nHurry! ⏰`;
-          console.log(`📤 SEND TO ${userPhone}:`, alertMessage);
+          const alertMessage = `🛑 **GATE ANNOUNCED!**\n\n${sub.flight}\n**Gate: ${currentGate}**\n\n⏰ Hurry up!`;
+          
+          // 🔥 SEND REAL WHATSAPP
+          try {
+            await this.twilioClient.messages.create({
+              body: alertMessage,
+              from: process.env.TWILIO_WHATSAPP_FROM!,
+              to: `whatsapp:${userPhone}`,
+            });
+            console.log(`✅ SENT GATE ALERT to ${userPhone}`);
+          } catch (error) {
+            console.error('❌ Twilio gate alert failed:', error.message);
+          }
         }
 
-        // 🔄 STATUS CHANGE ALERT
+        // 🔄 STATUS CHANGE ALERT + REAL MESSAGE
         if (flight.flight_status !== sub.lastStatus) {
-          console.log(`📊 STATUS CHANGE! ${sub.flight}: ${sub.lastStatus} → ${flight.flight_status}`);
           sub.lastStatus = flight.flight_status;
           
-          const statusMessage = `📊 **STATUS UPDATE**\n\n${sub.flight} is now: **${flight.flight_status.toUpperCase()}**`;
-          console.log(`📤 SEND TO ${userPhone}:`, statusMessage);
+          const statusMessage = `📊 **STATUS UPDATE**\n\n${sub.flight}\n**${flight.flight_status.toUpperCase()}**`;
+          
+          // 🔥 SEND REAL WHATSAPP
+          try {
+            await this.twilioClient.messages.create({
+              body: statusMessage,
+              from: process.env.TWILIO_WHATSAPP_FROM!,
+              to: `whatsapp:${userPhone}`,
+            });
+            console.log(`✅ SENT STATUS UPDATE to ${userPhone}`);
+          } catch (error) {
+            console.error('❌ Twilio status alert failed:', error.message);
+          }
         }
       }
     }, 3 * 60 * 1000); // 3 minutes
