@@ -1,31 +1,32 @@
 import { Injectable } from '@nestjs/common';
-import { Ollama } from 'ollama';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class AiService {
-  private ollama: Ollama;
-
-  constructor() {
-    this.ollama = new Ollama({ host: 'http://localhost:11434' });
-  }
+  constructor(private httpService: HttpService) {}
 
   async parseUserIntent(message: string) {
     const prompt = `Parse airport bot intent from: "${message}"
 
-Return ONLY JSON:
+Return ONLY valid JSON:
 {"intent":"flight_status|departures|arrivals|greeting|unknown","flightCode":"EK509?","airportCode":"FCO?"}`;
 
     try {
-      const response = await this.ollama.generate({
-        model: 'tinyllama',
-        prompt,
-        options: { temperature: 0.1 },
-      });
+      const response = await firstValueFrom(
+        this.httpService.post('http://localhost:11434/api/generate', {
+          model: 'tinyllama',
+          prompt,
+          options: { temperature: 0.1 },
+          stream: false,
+        }),
+      );
       
-      const cleaned = response.response.trim().replace(/```json|```/g, '');
+      const aiResponse = response.data.response.trim();
+      const cleaned = aiResponse.replace(/```json|```/g, '');
       return JSON.parse(cleaned);
     } catch (error) {
-      console.error('AI parse error:', error);
+      console.error('Ollama error:', error.message);
       return { intent: 'unknown' };
     }
   }
