@@ -9,7 +9,7 @@ export class AiService {
   async parseUserIntent(message: string) {
     const prompt = `Parse airport bot intent from: "${message}"
 
-Return ONLY valid JSON:
+Respond with ONLY valid JSON, no explanations:
 {"intent":"flight_status|departures|arrivals|greeting|unknown","flightCode":"EK509?","airportCode":"FCO?"}`;
 
     try {
@@ -22,11 +22,20 @@ Return ONLY valid JSON:
         }),
       );
       
-      const aiResponse = response.data.response.trim();
-      const cleaned = aiResponse.replace(/```json|```/g, '');
-      return JSON.parse(cleaned);
+      let aiResponse = response.data.response.trim();
+      
+      // 🔧 Better JSON extraction
+      aiResponse = aiResponse.replace(/^.*\{/, '{').replace(/\}.*$/, '}');
+      aiResponse = aiResponse.replace(/```json|```|```/g, '');
+      
+      console.log('🤖 Raw Ollama:', aiResponse);
+      
+      const parsed = JSON.parse(aiResponse);
+      console.log('✅ AI parsed:', parsed);
+      
+      return parsed;
     } catch (error) {
-      console.error('Ollama error:', error.message);
+      console.error('❌ Ollama parse failed:', error.message);
       return { intent: 'unknown' };
     }
   }
