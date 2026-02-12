@@ -7,10 +7,17 @@ export class AiService {
   constructor(private httpService: HttpService) {}
 
   async parseUserIntent(message: string) {
-    const prompt = `Parse airport bot intent from: "${message}"
+    const prompt = `CLASSIFY this airport message:
 
-Respond with ONLY valid JSON, no explanations:
-{"intent":"flight_status|departures|arrivals|greeting|unknown","flightCode":"EK509?","airportCode":"FCO?"}`;
+"${message}"
+
+JSON ONLY:
+{"intent":"flight_status","flightCode":"EK509"}
+{"intent":"departures"}
+{"intent":"greeting"}
+
+intents: flight_status,departures,arrivals,greeting,unknown`;
+
 
     try {
       const response = await firstValueFrom(
