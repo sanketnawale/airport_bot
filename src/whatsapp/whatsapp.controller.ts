@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { FlightsService } from '../flights/flights.service';
+import { AiService } from 'src/ai/ai.service';
 
 @Controller('whatsapp')
 export class WhatsappController {
@@ -13,7 +14,8 @@ export class WhatsappController {
   } = {};
   private pollInterval: NodeJS.Timeout | null = null;
 
-  constructor(private flightsService: FlightsService) {}
+  constructor(private flightsService: FlightsService,
+    private aiService: AiService) {}
 
   // 🔥 Enhanced polling with full status tracking
   private startPolling() {
@@ -62,126 +64,59 @@ export class WhatsappController {
   async handleWebhook(@Body() body: any, @Res() res: Response) {
     this.startPolling();
 
-    const message = (body.Body || body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.text?.body || '').toLowerCase().trim();
+    const message = (body.Body || body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.text?.body || '').trim();
     const phone = body.From || body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0]?.wa_id || '';
 
     console.log(`📱 ${phone}: "${message}"`);
 
     let responseText = '';
 
-    // 🔹 1. GREETINGS
-    if (message.includes('hello') || message.includes('hi') || message === 'menu') {
-      responseText = `👋 **Welcome to Fiumicino Airport**\n\nI can help with:\n\n✈️ Flight status (e.g., "EK509")\n🛫 Departures (type "departures")\n🛬 Arrivals (type "arrivals")\n🗺️ Route search (e.g., "FCO to LHR")\n\n**What do you need?**`;
-    }
+    // 🤖 AI‑powered intent detection (handles typos!)
+    const intent = await this.aiService.parseUserIntent(message);
+    console.log('🧠 AI intent:', intent);
 
-    // 🔹 2. BUTTON HANDLERS
-    else if (message === 'security') {
-      responseText = `🛡️ **Security Check Times** (LIVE)\n\nTerminal 2: 12 min 🟡\nTerminal 3: 8 min ✅\nGates E: 15 min ⏳\n\n*Updated: ${new Date().toLocaleTimeString('it-IT')}*`;
-    }
-    else if (message === 'passport') {
-      responseText = `📖 **Passport Control** (LIVE)\n\nSchengen: 5 min ✅\nNon-Schengen: 18 min ⏳\nPriority: 3 min 🚀`;
-    }
-    else if (message === 'cancel') {
-      delete this.activeSubscriptions[phone];
-      responseText = `✅ **Tracking cancelled**\n\nType flight number to track new flight.`;
-    }
-
-    // 🔹 3. DEPARTURES
-    else if (message.includes('departures') || message.includes('depart')) {
+    // Your existing logic, now AI‑enhanced
+    if (intent.intent === 'flight_status' && intent.flightCode) {
+      const flight = await this.flightsService.getFlightStatus(intent.flightCode);
+      if (flight) {
+        this.activeSubscriptions[phone] = {
+          flight: intent.flightCode,
+          lastGate: flight.departure?.gate || flight.arrival?.gate || null,
+          lastStatus: flight.flight_status,
+        };
+        responseText = this.flightsService.formatFlightForWhatsApp(flight);
+      } else {
+        responseText = `❌ Flight ${intent.flightCode} not found 😔`;
+      }
+    } 
+    else if (intent.intent === 'departures') {
       const flights = await this.flightsService.getDepartures('FCO', 10);
-      if (flights.length > 0) {
-        responseText = this.flightsService.formatDeparturesList(flights);
-      } else {
-        responseText = `❌ No departures found. Try again later.`;
-      }
+      responseText = this.flightsService.formatDeparturesList(flights);
     }
-
-    // 🔹 4. ARRIVALS
-    else if (message.includes('arrivals') || message.includes('arrive')) {
+    else if (intent.intent === 'arrivals') {
       const flights = await this.flightsService.getArrivals('FCO', 10);
-      if (flights.length > 0) {
-        responseText = `🛬 **FCO Arrivals**\n\n`;
-        flights.slice(0, 10).forEach((f, i) => {
-          const time = new Date(f.arrival.scheduled).toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          });
-          responseText += `${i + 1}. ${f.flight.iata} from ${f.departure.iata}\n   ${time} | Gate: ${f.arrival.gate || 'TBA'}\n\n`;
-        });
-      } else {
-        responseText = `❌ No arrivals found.`;
-      }
+      responseText = `🛬 **FCO Arrivals**\n\n${flights.slice(0, 10).map((f, i) => `${i+1}. ${f.flight.iata} from ${f.departure.iata} | ${new Date(f.arrival.scheduled).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'})}`).join('\n')}`;
     }
-
-    // 🔹 5. ROUTE SEARCH (e.g., "FCO to LHR" or "Rome to London")
-    else if (message.includes(' to ') || message.includes('→')) {
-      const routeMatch = message.match(/([A-Z]{3})\s*(?:to|→)\s*([A-Z]{3})/i);
-      if (routeMatch) {
-        const [, dep, arr] = routeMatch;
-        const flights = await this.flightsService.searchFlightsByRoute(
-          dep.toUpperCase(),
-          arr.toUpperCase(),
-        );
-        
-        if (flights.length > 0) {
-          responseText = `✈️ **${dep.toUpperCase()} → ${arr.toUpperCase()}**\n\n`;
-          flights.forEach((f, i) => {
-            responseText += `${i + 1}. ${f.flight.iata} - ${f.airline.name}\n`;
-            responseText += `   ${new Date(f.departure.scheduled).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}\n\n`;
-          });
-        } else {
-          responseText = `❌ No flights found for ${dep.toUpperCase()} → ${arr.toUpperCase()}`;
-        }
-      }
+    else if (intent.intent === 'greeting') {
+      responseText = `👋 **Fiumicino Airport Bot**\n\n✈️ Track flights ("EK509")\n🛫 Departures\n🛬 Arrivals\n\n**What flight?**`;
     }
-
-    // 🔹 6. FLIGHT NUMBER (Primary feature with full details)
     else {
+      // Fallback to your existing regex logic
       const flightMatch = message.match(/([a-zA-Z]{2}\d{3,5})/i);
       if (flightMatch) {
         const flightIata = flightMatch[1].toUpperCase();
-        console.log(`🛫 Tracking: ${flightIata}`);
-
         const flight = await this.flightsService.getFlightStatus(flightIata);
-
         if (flight) {
-          // Subscribe user
           this.activeSubscriptions[phone] = {
             flight: flightIata,
             lastGate: flight.departure?.gate || flight.arrival?.gate || null,
             lastStatus: flight.flight_status,
           };
-          console.log(`✅ SUBSCRIBED ${phone} → ${flightIata}`);
-
-          // Format full flight details
           responseText = this.flightsService.formatFlightForWhatsApp(flight);
-
-          // Return with buttons
-          const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-          <Response>
-            <Message>
-              <Body>${responseText}</Body>
-              <ButtonsAction type="reply">
-                <ButtonsActionButton action="reply" value="security">🛡️ Security Times</ButtonsActionButton>
-                <ButtonsActionButton action="reply" value="passport">📖 Passport Control</ButtonsActionButton>
-                <ButtonsActionButton action="reply" value="cancel">❌ Stop Alerts</ButtonsActionButton>
-              </ButtonsAction>
-            </Message>
-          </Response>`;
-
-          res.set('Content-Type', 'text/xml');
-          res.send(twiml);
-          return;
-        } else {
-          responseText = `❌ Flight ${flightIata} not found.\n\nCheck the flight number and try again.`;
         }
+      } else {
+        responseText = `🏛️ **Fiumicino Airport Bot**\n\n✈️ Track flight: "EK509"\n🛫 "departures"\n🛬 "arrivals"\n\n**What do you need?**`;
       }
-    }
-
-    // 🔹 7. FALLBACK
-    if (!responseText) {
-      responseText = `🏛️ **Fiumicino Airport Bot**\n\n✈️ Track flight: "EK509"\n🛫 View departures\n🛬 View arrivals\n🗺️ Search route: "FCO to LHR"\n\n**What do you need?**`;
     }
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
