@@ -7,43 +7,67 @@ export class AiService {
   constructor(private httpService: HttpService) {}
 
   async parseUserIntent(message: string) {
-    const prompt = `CLASSIFY this airport message:
+    const prompt = `Message: "${message}"
 
-"${message}"
+    Return JSON:
+    {"intent":"flight_status","flightCode":"EK509"}
+    OR
+    {"intent":"departures"}
+    OR
+    {"intent":"arrivals"}
+    OR
+    {"intent":"greeting"}
 
-JSON ONLY:
-{"intent":"flight_status","flightCode":"EK509"}
-{"intent":"departures"}
-{"intent":"greeting"}
-
-intents: flight_status,departures,arrivals,greeting,unknown`;
-
+    Valid intents: flight_status, departures, arrivals, greeting, unknown
+    JSON only:`;
 
     try {
-      const response = await firstValueFrom(
+        const response = await firstValueFrom(
         this.httpService.post('http://localhost:11434/api/generate', {
-          model: 'tinyllama',
-          prompt,
-          options: { temperature: 0.1 },
-          stream: false,
+            model: 'tinyllama',
+            prompt,
+            options: { 
+            temperature: 0.05,
+            num_predict: 60,
+            },
+            stream: false,
         }),
-      );
-      
-      let aiResponse = response.data.response.trim();
-      
-      // 🔧 Better JSON extraction
-      aiResponse = aiResponse.replace(/^.*\{/, '{').replace(/\}.*$/, '}');
-      aiResponse = aiResponse.replace(/```json|```|```/g, '');
-      
-      console.log('🤖 Raw Ollama:', aiResponse);
-      
-      const parsed = JSON.parse(aiResponse);
-      console.log('✅ AI parsed:', parsed);
-      
-      return parsed;
+        );
+        
+        let aiResponse = response.data.response.trim();
+        
+        // 🔥 Aggressive JSON extraction
+        const jsonMatch = aiResponse.match(/\{[^}]*"intent"[^}]*\}/);
+        if (jsonMatch) {
+        aiResponse = jsonMatch[0];
+        } else {
+        // Fallback: look for ANY JSON
+        const anyJson = aiResponse.match(/\{[^}]+\}/);
+        if (anyJson) {
+            aiResponse = anyJson[0];
+        }
+        }
+        
+        aiResponse = aiResponse.replace(/```json|```/g, '').trim();
+        
+        console.log('🤖 Raw Ollama:', aiResponse);
+        
+        const parsed = JSON.parse(aiResponse);
+        
+        // 🔥 Normalize output
+        const result = {
+        intent: parsed.intent || 'unknown',
+        flightCode: parsed.flightCode?.replace(/[^A-Z0-9]/gi, '').toUpperCase() || null,
+        airportCode: parsed.airportCode || null,
+        };
+        
+        console.log('✅ AI parsed:', result);
+        return result;
+        
     } catch (error) {
-      console.error('❌ Ollama parse failed:', error.message);
-      return { intent: 'unknown' };
+        console.error('❌ Ollama failed:', error.message);
+        return { intent: 'unknown', flightCode: null };
     }
-  }
+    }
+
 }
